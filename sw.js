@@ -5,7 +5,7 @@
 // открывается сохранённая копия. Если сеть отвечает дольше TIMEOUT, тоже берём копию:
 // ждать на плохой связи не приходится.
 // При изменении списка файлов увеличьте номер версии.
-const VERSION = 'dyhanie-v3';
+const VERSION = 'dyhanie-v4';
 const TIMEOUT = 2500;
 
 const APP_FILES = [
@@ -37,7 +37,8 @@ self.addEventListener('install', (event) => {
   event.waitUntil(
     caches
       .open(VERSION)
-      .then((cache) => cache.addAll(APP_FILES))
+      // cache: 'reload' — берём файлы из сети, минуя обычный кэш браузера (иначе можно скачать старые)
+      .then((cache) => cache.addAll(APP_FILES.map((url) => new Request(url, { cache: 'reload' }))))
       .then(() => self.skipWaiting()),
   );
 });
@@ -69,7 +70,11 @@ self.addEventListener('fetch', (event) => {
         if (cached) return cached;
       }
 
-      const fresh = fetch(request)
+      // Свои файлы запрашиваем мимо обычного кэша браузера: GitHub Pages просит держать их
+      // 10 минут, и без этого обновление приложения приходило бы с задержкой.
+      // Запрос строим по адресу: Request с режимом navigate скопировать напрямую нельзя.
+      const netRequest = ownFile ? new Request(request.url, { cache: 'reload', credentials: 'same-origin' }) : request;
+      const fresh = fetch(netRequest)
         .then((response) => {
           if (response.ok || response.type === 'opaque') cache.put(request, response.clone()).catch(() => {});
           return response;

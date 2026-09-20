@@ -99,14 +99,24 @@ class MockAudioContext {
     this.sampleRate = 48000;
     this.baseLatency = 0;
     this.outputLatency = 0;
+    this.seq = 0;
+    this.lastSuspend = 0;
     this.nodes = [];
     this.sources = [];
     this.destination = { kind: 'destination' };
     MockAudioContext.last = this;
   }
+  static resumeDelay = 0;
   get currentTime() { return (vnow - this.epoch) / 1000; }
-  resume() { this.state = 'running'; return Promise.resolve(); }
-  suspend() { this.state = 'suspended'; return Promise.resolve(); }
+  // resume() может быть медленным (MockAudioContext.resumeDelay, мс) и, как в браузере, выполняется в порядке вызова:
+  // suspend(), вызванный после resume(), но до его завершения, побеждает — контекст остаётся усыплённым.
+  resume() {
+    const seq = ++this.seq;
+    const apply = () => { if (this.lastSuspend < seq) this.state = 'running'; };
+    if (!MockAudioContext.resumeDelay) { apply(); return Promise.resolve(); }
+    return new Promise((resolve) => timeouts.push({ fn: () => { apply(); resolve(); }, at: vnow + MockAudioContext.resumeDelay }));
+  }
+  suspend() { this.lastSuspend = ++this.seq; this.state = 'suspended'; return Promise.resolve(); }
   createGain() { const n = new Node(this, 'gain'); n.gain = new Param(this, 'gain', 1); return n; }
   createOscillator() {
     const n = new Source(this, 'oscillator');
@@ -213,9 +223,27 @@ async function runMode(def) {
     for (let c = 0; (c + 1) * cycle * 1000 <= runMs; c++) {
       for (const e of timeline) {
         const at = (startedAt + (c * cycle + e.t0) * 1000 - epoch) / 1000;
-        if (!ctx.sources.some((s) => s.startAt !== null && Math.abs(s.startAt - at) < 0.004)) {
-          problem(`${d.join('-')}: нет звука на границе фазы ${e.phase} (t=${at.toFixed(2)})`);
-        }
+        const onMark = ctx.sources.filter((s) => s.startAt !== null && Math.abs(s.startAt - at) < 0.004).length;
+        if (!onMark) problem(`${d.join('-')}: нет звука на границе фазы ${e.phase} (t=${at.toFixed(2)})`);
+        // метка ядра — это 3 синуса колокольчика или 2 синуса первого «тука»; больше — режим положил свой тик на метку
+        const expected = e.phase === 0 || e.phase === 2 ? 3 : 2;
+        if (onMark > expected) problem(`${d.join('-')}: на границе фазы ${e.phase} ${onMark} источников вместо ${expected} — тик режима попал на метку (k = N?)`);
+      }
+    }
+
+    // одноразовые звуки режима стоят только на целых секундах фазы 1..T-1: не на метке следующей фазы и не после конца
+    const sessionStart = (startedAt - epoch) / 1000;
+    for (const s of ctx.sources) {
+      if (s.startAt === null || s.startAt < sessionStart - 0.001) continue; // непрерывные источники стартуют до первой фазы
+      let rel = (s.startAt - sessionStart) % cycle;
+      if (rel > cycle - 0.01) rel -= cycle; // 15.9999… — это метка начала цикла
+      const e = timeline.find((x) => rel >= x.t0 - 0.01 && rel < x.t0 + x.dur - 0.01) || timeline[0];
+      let off = rel - e.t0;
+      if (off > e.dur - 0.01) off -= e.dur; // дрожание на границе: это метка следующей фазы
+      if (Math.abs(off) < 0.125) continue; // метка ядра (и второй «тук» через 0.12 с)
+      const k = Math.round(off);
+      if (Math.abs(off - k) > 0.004 || k < 1 || k > e.dur - 1) {
+        problem(`${d.join('-')}: тик фазы ${e.phase} (T=${e.dur}) на ${off.toFixed(3)} с — не на целой секунде 1..T-1`);
       }
     }
 
@@ -260,12 +288,182 @@ async function runMode(def) {
   return ok;
 }
 
+// Ядро: гонки start()/stop(), смена режима на ходу, пробуждение, исключение в режиме, опоздавшая первая метка.
+const flush = () => new Promise((resolve) => setImmediate(resolve)); // дать сработать продолжениям после await
+async function runEngine(def) {
+  problems = [];
+  const info = () => timelineOf([4, 7, 8, 0]);
+  const fresh = () => {
+    intervals = [];
+    timeouts = [];
+    MockAudioContext.resumeDelay = 0;
+    const sound = globalThis.BreathSound.mount(env);
+    sound.setMode(def.id);
+    return sound;
+  };
+  const outsOnMaster = (ctx) => {
+    const master = ctx.nodes.find((n) => n.dest === ctx.destination);
+    return ctx.nodes.filter((n) => n.connected && n.dest === master).length;
+  };
+
+  // 1. stop() во время ожидания resume(): сессии нет, контекст должен уснуть
+  {
+    const sound = fresh();
+    const p = sound.start({ startedAt: vnow + 120, ...info() });
+    sound.stop();
+    await p;
+    advance(1000);
+    if (sound.playing) problem('start+stop: сессия играет после stop()');
+    if (MockAudioContext.last.state !== 'suspended') problem('start+stop: контекст остался разбуженным без сессии');
+  }
+
+  // 2. stop(), затем новый start() до истечения 450 мс при медленном resume(): усыплять новую сессию нельзя
+  {
+    const sound = fresh();
+    await sound.start({ startedAt: vnow + 120, ...info() });
+    advance(2000);
+    sound.stop();
+    advance(440);
+    MockAudioContext.resumeDelay = 50;
+    const p = sound.start({ startedAt: vnow + 120, ...info() });
+    advance(100);
+    await p;
+    const ctx = MockAudioContext.last;
+    if (!sound.playing) problem('перезапуск за 450 мс: сессия не запустилась');
+    if (ctx.state !== 'running') problem('перезапуск за 450 мс: контекст усыплён под новой сессией');
+    const before = ctx.sources.length;
+    advance(3000);
+    if (ctx.sources.length === before) problem('перезапуск за 450 мс: новая сессия молчит');
+    sound.stop();
+    advance(1000);
+  }
+
+  // 3. звук включили в настройках посреди идущей сессии (режим был «выкл.»), и выключили/включили снова
+  {
+    const sound = fresh();
+    sound.setMode('off');
+    await sound.start({ startedAt: vnow + 120, ...info() });
+    if (sound.playing) problem('режим «выкл.»: сессия почему-то звучит');
+    sound.setMode(def.id);
+    await flush();
+    advance(200);
+    if (!sound.playing) problem('setMode на ходу: звук не включился в идущей сессии');
+    sound.setMode('off');
+    await flush();
+    advance(1500);
+    if (sound.playing) problem('setMode(off) на ходу: сессия не заглушена');
+    if (MockAudioContext.last.state !== 'suspended') problem('setMode(off) на ходу: контекст не усыплён');
+    sound.setMode(def.id);
+    await flush();
+    if (!sound.playing) problem('setMode после «выкл.»: сессия приложения не поднялась снова');
+    sound.stop();
+    sound.setMode('off');
+    sound.setMode(def.id);
+    await flush();
+    if (sound.playing) problem('setMode после stop(): звук запустился без сессии приложения');
+  }
+
+  // 4. браузер усыпил контекст посреди сессии — wake() должен вернуть звук и не оставить старый выход подключённым
+  {
+    const sound = fresh();
+    await sound.start({ startedAt: vnow + 120, ...info() });
+    advance(3000);
+    const ctx = MockAudioContext.last;
+    ctx.suspend();
+    advance(5000);
+    sound.wake();
+    await flush();
+    advance(600);
+    if (!sound.playing || ctx.state !== 'running') problem('wake: звук не вернулся после усыпления контекста');
+    if (outsOnMaster(ctx) !== 1) problem(`wake: к мастеру подключено выходов сессий: ${outsOnMaster(ctx)}, ожидался 1`);
+    const before = ctx.sources.length;
+    advance(20000);
+    if (ctx.sources.length === before) problem('wake: после пробуждения фазы не расписываются');
+    sound.stop();
+    advance(1000);
+  }
+
+  // 5. проба звука прерывается сменой режима, а по окончании не мешает включать режим
+  {
+    const sound = fresh();
+    await sound.demo();
+    advance(1000);
+    sound.setMode('off');
+    advance(100);
+    if (sound.playing) problem('demo: смена режима не остановила пробу');
+    sound.setMode(def.id);
+    await flush();
+    if (sound.playing) problem('demo: setMode после пробы запустил звук без сессии');
+  }
+
+  // 6. медленный resume(): первая фаза опаздывает, но её метка должна начаться «сейчас», а не в прошлом
+  {
+    const sound = fresh();
+    MockAudioContext.resumeDelay = 300;
+    const p = sound.start({ startedAt: vnow + 120, ...info() });
+    advance(300);
+    await p;
+    const ctx = MockAudioContext.last;
+    const t0 = ctx.currentTime;
+    if (!ctx.sources.some((s) => s.startAt !== null && Math.abs(s.startAt - t0) < 0.004)) problem('опоздавшая первая фаза: метки нет');
+    if (ctx.sources.some((s) => s.startAt !== null && s.startAt < t0 - 1e-6)) problem('опоздавшая первая фаза: звук запущен в прошлом');
+    sound.stop();
+    advance(1000);
+  }
+
+  // 7. режим бросает исключение в phase(): метка фазы не должна повторяться на каждом тике таймера
+  {
+    globalThis.BreathSound.register({
+      id: 'throwing',
+      name: 'Сломанный',
+      fLow: 300,
+      fHigh: 400,
+      create: () => ({ phase() { throw new Error('сломанный режим'); }, stop() {} }),
+    });
+    intervals = [];
+    timeouts = [];
+    MockAudioContext.resumeDelay = 0;
+    const sound = globalThis.BreathSound.mount(env);
+    sound.setMode('throwing');
+    const startedAt = vnow + 120;
+    const { timeline, cycle } = timelineOf([4, 7, 8, 0]);
+    let thrown = 0;
+    try {
+      await sound.start({ startedAt, timeline, cycle });
+    } catch { thrown++; }
+    for (let i = 0; i < 30; i++) {
+      try { advance(200); } catch { thrown++; }
+    }
+    const ctx = MockAudioContext.last;
+    const at = (startedAt - ctx.epoch) / 1000;
+    const marks = ctx.sources.filter((s) => s.startAt !== null && Math.abs(s.startAt - at) < 0.004).length;
+    if (!thrown) problem('исключение из phase() проглочено — тест его не увидел');
+    if (marks !== 3) problem(`исключение в phase(): метка первой фазы сыграна ${marks / 3} раз(а), ожидался 1`);
+    const at2 = at + 4;
+    if (!ctx.sources.some((s) => s.startAt !== null && Math.abs(s.startAt - at2) < 0.004)) problem('исключение в phase(): следующая фаза не расписана');
+    sound.stop();
+    advance(1000);
+  }
+
+  MockAudioContext.resumeDelay = 0;
+  const ok = problems.length === 0;
+  console.log(`${ok ? 'OK    ' : 'ПЛОХО '} engine   «ядро»  (проверено с режимом ${def.id})`);
+  for (const p of problems) console.log(`         - ${p}`);
+  return ok;
+}
+
 (async () => {
   let failed = false;
   const defs = globalThis.BreathSound.list();
   if (!defs.length) {
     console.log('ПЛОХО  ни один режим не зарегистрировался (BreathSound.register)');
     process.exit(1);
+  }
+  try {
+    if (!(await runEngine(defs[0]))) failed = true;
+  } catch (err) {
+    failed = true;
+    console.log(`ПЛОХО  engine: исключение: ${err && err.stack ? err.stack.split('\n').slice(0, 4).join(' | ') : err}`);
   }
   for (const def of defs) {
     try {
