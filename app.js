@@ -3,7 +3,7 @@
 
   /* ---------- Данные ---------- */
 
-  const STORAGE_KEY = 'dyhanie.v2';
+  const STORAGE_KEY = 'dyhanie.v3';
 
   // Фазы идут по сторонам фигуры по часовой стрелке, начиная с левой.
   const PHASES = [
@@ -17,12 +17,12 @@
   // Стандартные программы: ритмы, которые повторяются в популярных дыхательных приложениях
   // и описаны в исследованиях медленного дыхания. Все без долгих задержек, кроме «Сна» (известное 4-7-8).
   const DEFAULTS = {
-    selected: 'focus',
-    proportional: true, // длина стороны пропорциональна времени фазы
+    selected: 'sleep',
+    proportional: false, // длина стороны пропорциональна времени фазы
     background: 'bubbles', // живой фон: id из папки backgrounds или 'none'
-    sound: 'tone', // режим звука: id из папки sound или 'off'
+    sound: 'bell', // режим звука: id из папки sound или 'off'
     volume: 0.6,
-    vibrate: false,
+    vibrate: true,
     programs: [
       { id: 'calm', name: 'Спокойствие', d: [4, 0, 6, 0], note: 'Когда тревожно или накопился стресс. Выдох чуть длиннее вдоха, 6 дыханий в минуту.' },
       { id: 'focus', name: 'Фокус', d: [4, 4, 4, 4], note: 'Перед важным делом или в напряжённый момент. Ровный «квадрат» помогает собраться.' },
@@ -696,6 +696,14 @@
   // Работа без интернета. На компьютере при разработке не включаем (иначе мешает кэш); проверить можно с ?sw=1.
   const local = location.hostname === 'localhost' || location.hostname === '127.0.0.1';
   if ('serviceWorker' in navigator && (!local || location.search.includes('sw=1'))) {
+    // Если приложение обновилось, подхватываем новую версию — но не посреди сессии дыхания.
+    const hadController = !!navigator.serviceWorker.controller;
+    let reloading = false;
+    navigator.serviceWorker.addEventListener('controllerchange', () => {
+      if (!hadController || reloading || running) return;
+      reloading = true;
+      location.reload();
+    });
     navigator.serviceWorker.register('sw.js').catch(() => {});
   }
 })();

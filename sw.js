@@ -1,7 +1,12 @@
 // Service worker: приложение открывается без интернета.
-// Стратегия: сначала отдаём сохранённую копию (мгновенный запуск), а в фоне скачиваем свежую —
-// она появится при следующем открытии. При изменении списка файлов увеличьте номер версии.
-const VERSION = 'dyhanie-v2';
+//
+// Стратегия: сначала сеть, копия из кэша — запасной вариант.
+// Приложение маленькое, поэтому при живом интернете оно всегда свежее, а без интернета
+// открывается сохранённая копия. Если сеть отвечает дольше TIMEOUT, тоже берём копию:
+// ждать на плохой связи не приходится.
+// При изменении списка файлов увеличьте номер версии.
+const VERSION = 'dyhanie-v3';
+const TIMEOUT = 2500;
 
 const APP_FILES = [
   './',
@@ -56,19 +61,26 @@ self.addEventListener('fetch', (event) => {
 
   event.respondWith(
     caches.open(VERSION).then(async (cache) => {
-      const cached = await cache.match(request, { ignoreSearch: ownFile });
+      const fromCache = () => cache.match(request, { ignoreSearch: ownFile });
+
+      // Шрифты не меняются — их достаточно взять из кэша, если они там есть.
+      if (font) {
+        const cached = await fromCache();
+        if (cached) return cached;
+      }
+
       const fresh = fetch(request)
         .then((response) => {
-          if (response.ok || response.type === 'opaque') cache.put(request, response.clone());
+          if (response.ok || response.type === 'opaque') cache.put(request, response.clone()).catch(() => {});
           return response;
         })
         .catch(() => null);
-      if (cached) {
-        event.waitUntil(fresh);
-        return cached;
-      }
-      const response = await fresh;
+
+      event.waitUntil(fresh); // не выключаемся, пока свежая копия не ляжет в кэш
+      const slow = new Promise((resolve) => setTimeout(() => resolve(null), TIMEOUT));
+      const response = (await Promise.race([fresh, slow])) || (await fromCache()) || (await fresh);
       if (response) return response;
+
       // нет сети и нет копии: для перехода на страницу отдаём главный экран
       if (request.mode === 'navigate') return (await cache.match('index.html')) || Response.error();
       return Response.error();
