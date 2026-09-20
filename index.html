@@ -8,7 +8,12 @@
   <title>Дыхание</title>
   <link rel="manifest" href="manifest.webmanifest">
   <link rel="icon" href="icons/icon-192.png" type="image/png">
-  <link rel="apple-touch-icon" href="icons/icon-192.png">
+  <!-- iPhone не читает манифест: иконку, заголовок и вид строки состояния задаём отдельно -->
+  <link rel="apple-touch-icon" href="icons/icon-180.png">
+  <meta name="apple-mobile-web-app-title" content="Дыхание">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Onest:wght@400;500;600;700&display=swap" rel="stylesheet">
@@ -121,7 +126,7 @@
     <div id="installBox" class="install" hidden>
       <div class="option-text">
         <span class="option-title">Установить на телефон</span>
-        <span class="option-note">Приложение появится отдельной иконкой и будет работать без интернета.</span>
+        <span class="option-note" id="installNote">Приложение появится отдельной иконкой и будет работать без интернета.</span>
       </div>
       <button id="install" class="pill accent" type="button">Установить</button>
     </div>
@@ -146,7 +151,7 @@
     <div class="option">
       <div class="option-text">
         <span class="option-title" id="vibrateLabel">Вибрация</span>
-        <span class="option-note">Короткий импульс — вдох, два — задержка, длинный — выдох. Работает только при включённом экране.</span>
+        <span class="option-note" id="vibrateNote">Короткий импульс — вдох, два — задержка, длинный — выдох. Работает только при включённом экране.</span>
       </div>
       <button id="vibrate" class="switch" type="button" role="switch" aria-checked="false" aria-labelledby="vibrateLabel"><span></span></button>
     </div>

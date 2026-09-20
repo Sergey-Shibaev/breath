@@ -566,6 +566,7 @@
     volumeInput.value = Math.round(state.volume * 100);
     vibrateSwitch.setAttribute('aria-checked', String(state.vibrate));
     vibrateSwitch.disabled = !navigator.vibrate;
+    if (!navigator.vibrate) $('vibrateNote').textContent = 'Этот телефон не даёт приложениям управлять вибрацией. На iPhone она недоступна.';
   }
 
   function pickChip(e, key) {
@@ -663,6 +664,16 @@
   // Ловим его и показываем свою кнопку в настройках — искать пункт в меню браузера не нужно.
   let installPrompt = null;
   const installBox = $('installBox');
+  const standalone = matchMedia('(display-mode: standalone)').matches || navigator.standalone === true;
+
+  // iPhone не умеет предлагать установку сам: там её делают вручную через «Поделиться».
+  const isIOS = /iP(hone|ad|od)/.test(navigator.userAgent) ||
+    (navigator.maxTouchPoints > 1 && /Mac/.test(navigator.userAgent)); // iPad выдаёт себя за Mac
+  if (isIOS && !standalone) {
+    $('installNote').textContent = 'Нажмите «Поделиться» внизу Safari, затем «На экран „Домой“». Приложение появится отдельной иконкой и будет работать без интернета.';
+    $('install').hidden = true;
+    installBox.hidden = false;
+  }
 
   window.addEventListener('beforeinstallprompt', (e) => {
     e.preventDefault(); // без этого Chrome показал бы свою подсказку внизу экрана

@@ -60,6 +60,11 @@
     function ensureContext() {
       if (ctx) return;
       ctx = new AudioCtx();
+      // iPhone по умолчанию глушит звук страницы боковым переключателем «без звука».
+      // 'playback' говорит системе, что звук — суть занятия, как у аудиоплеера.
+      try {
+        if (root.navigator && root.navigator.audioSession) root.navigator.audioSession.type = 'playback';
+      } catch {}
       master = ctx.createGain();
       master.gain.value = MASTER * volume;
       master.connect(ctx.destination);

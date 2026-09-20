@@ -5,7 +5,7 @@
 // открывается сохранённая копия. Если сеть отвечает дольше TIMEOUT, тоже берём копию:
 // ждать на плохой связи не приходится.
 // При изменении списка файлов увеличьте номер версии.
-const VERSION = 'dyhanie-v4';
+const VERSION = 'dyhanie-v5';
 const TIMEOUT = 2500;
 
 const APP_FILES = [
@@ -15,6 +15,7 @@ const APP_FILES = [
   'app.js',
   'figure.js',
   'manifest.webmanifest',
+  'icons/icon-180.png',
   'icons/icon-192.png',
   'icons/icon-512.png',
   'icons/icon-maskable-512.png',
