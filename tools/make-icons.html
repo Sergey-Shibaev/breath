@@ -1,0 +1,115 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <title>Дыхание — генератор иконок</title>
+  <style>
+    body { margin: 0; padding: 24px; background: #24232A; color: #F3F1E7; font-family: "Segoe UI", Roboto, system-ui, sans-serif; }
+    .row { display: flex; gap: 24px; align-items: flex-end; flex-wrap: wrap; }
+    canvas { display: block; background: #000; }
+    #log { margin-top: 16px; white-space: pre-line; color: #B9B6C2; }
+  </style>
+</head>
+<body>
+  <!-- Рисует иконку приложения и сохраняет PNG в папку icons через dev-server.js (POST /__save-icon).
+       Открыть: http://localhost:8137/tools/make-icons.html -->
+  <div class="row" id="row"></div>
+  <div id="log"></div>
+  <script>
+    const LUNG_L = 'M82 46 C80 31 66 27 58 39 C40 65 20 104 16 150 C13 182 22 200 42 200 C60 200 80 191 86 173 C89 163 86 150 86 138 C86 110 88 82 86 62 C86 56 84 50 82 46 Z';
+    const LUNG_R = 'M118 46 C120 31 134 27 142 39 C160 65 180 104 184 150 C187 182 178 200 158 200 C140 200 120 191 114 173 C111 163 114 150 114 138 C114 110 112 82 114 62 C114 56 116 50 118 46 Z';
+    const AIR = '#F7D92B';
+
+    // content — доля стороны, которую занимает рисунок (у maskable-иконки меньше: края обрезает система)
+    function draw(size, content, rounded) {
+      const c = document.createElement('canvas');
+      c.width = c.height = size;
+      const g = c.getContext('2d');
+      const bg = g.createLinearGradient(0, 0, 0, size);
+      bg.addColorStop(0, '#15323A');
+      bg.addColorStop(1, '#0B0A0D');
+      g.fillStyle = bg;
+      if (rounded) {
+        g.beginPath();
+        g.roundRect(0, 0, size, size, size * 0.22);
+        g.fill();
+      } else {
+        g.fillRect(0, 0, size, size);
+      }
+
+      const box = size * content;
+      const o = (size - box) / 2;
+      // квадрат и точка в левом нижнем углу
+      g.strokeStyle = 'rgba(247, 217, 43, .55)';
+      g.lineWidth = Math.max(2, size * 0.012);
+      g.strokeRect(o, o, box, box);
+      g.fillStyle = 'rgba(247, 217, 43, .25)';
+      g.beginPath();
+      g.arc(o, o + box, size * 0.062, 0, Math.PI * 2);
+      g.fill();
+      g.fillStyle = AIR;
+      g.beginPath();
+      g.arc(o, o + box, size * 0.034, 0, Math.PI * 2);
+      g.fill();
+
+      // лёгкие: серые сверху, жёлтые снизу — наполовину наполнены
+      const s = (box * 0.74) / 200;
+      g.save();
+      g.translate(size / 2 - 100 * s, size / 2 - 104 * s);
+      g.scale(s, s);
+      g.lineCap = 'round';
+      g.strokeStyle = '#8A8893';
+      g.lineWidth = 13;
+      g.beginPath();
+      g.moveTo(100, 8);
+      g.lineTo(100, 60);
+      g.stroke();
+      g.lineWidth = 9;
+      g.beginPath();
+      g.moveTo(100, 58);
+      g.quadraticCurveTo(97, 76, 82, 92);
+      g.moveTo(100, 58);
+      g.quadraticCurveTo(103, 76, 118, 92);
+      g.stroke();
+      const lungs = new Path2D(LUNG_L);
+      lungs.addPath(new Path2D(LUNG_R));
+      g.fillStyle = '#4A4951';
+      g.fill(lungs);
+      g.save();
+      g.clip(lungs);
+      const air = g.createLinearGradient(0, 96, 0, 200);
+      air.addColorStop(0, '#FFE86A');
+      air.addColorStop(0.06, AIR);
+      air.addColorStop(1, '#E3B90E');
+      g.fillStyle = air;
+      g.fillRect(0, 96, 200, 110);
+      g.restore();
+      g.restore();
+      return c;
+    }
+
+    const ICONS = [
+      { name: 'icon-192.png', size: 192, content: 0.66, rounded: true },
+      { name: 'icon-512.png', size: 512, content: 0.66, rounded: true },
+      { name: 'icon-maskable-512.png', size: 512, content: 0.5, rounded: false },
+    ];
+
+    (async () => {
+      const log = document.getElementById('log');
+      for (const icon of ICONS) {
+        const c = draw(icon.size, icon.content, icon.rounded);
+        c.style.width = c.style.height = `${Math.min(icon.size, 256)}px`;
+        document.getElementById('row').append(c);
+        const blob = await new Promise((resolve) => c.toBlob(resolve, 'image/png'));
+        try {
+          const res = await fetch(`/__save-icon?name=${icon.name}`, { method: 'POST', body: blob });
+          log.textContent += `${icon.name}: ${res.ok ? 'сохранено' : `ошибка ${res.status}`} (${blob.size} байт)\n`;
+        } catch (err) {
+          log.textContent += `${icon.name}: не сохранено — ${err.message}\n`;
+        }
+      }
+      document.title = 'готово';
+    })();
+  </script>
+</body>
+</html>
