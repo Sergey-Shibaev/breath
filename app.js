@@ -657,6 +657,42 @@
   syncRoute();
   requestAnimationFrame(() => document.body.classList.remove('no-anim'));
 
+  /* ---------- Установка на телефон ---------- */
+
+  // Chrome сам решает, когда приложение можно установить, и сообщает об этом событием.
+  // Ловим его и показываем свою кнопку в настройках — искать пункт в меню браузера не нужно.
+  let installPrompt = null;
+  const installBox = $('installBox');
+
+  window.addEventListener('beforeinstallprompt', (e) => {
+    e.preventDefault(); // без этого Chrome показал бы свою подсказку внизу экрана
+    installPrompt = e;
+    installBox.hidden = false;
+  });
+
+  $('install').addEventListener('click', async () => {
+    if (!installPrompt) return;
+    const prompt = installPrompt;
+    installPrompt = null;
+    installBox.hidden = true;
+    try {
+      await prompt.prompt();
+      const { outcome } = await prompt.userChoice;
+      if (outcome !== 'accepted') {
+        // передумали — вернём кнопку, установить можно будет позже
+        installPrompt = prompt;
+        installBox.hidden = false;
+      }
+    } catch {
+      installBox.hidden = true;
+    }
+  });
+
+  window.addEventListener('appinstalled', () => {
+    installPrompt = null;
+    installBox.hidden = true;
+  });
+
   // Работа без интернета. На компьютере при разработке не включаем (иначе мешает кэш); проверить можно с ?sw=1.
   const local = location.hostname === 'localhost' || location.hostname === '127.0.0.1';
   if ('serviceWorker' in navigator && (!local || location.search.includes('sw=1'))) {
